@@ -1,0 +1,79 @@
+bedpath = ['BedMachineAntarctica-v3.nc'];
+nsidc_vel = ['Antarctica_ice_velocity.nc'];
+
+md.miscellaneous.name = 'PIG';
+md.mesh.epsg = 3031;
+md.transient.ismovingfront = 0; %Ethan 1
+
+disp('Interpolating from BedMachine');
+x = single(ncread(bedpath, 'x'));
+y = single(ncread(bedpath, 'y'));
+thickness = ncread(bedpath, 'thickness');
+surface = ncread(bedpath, 'surface');
+bed = ncread(bedpath, 'bed');
+maskdata = single(ncread(bedpath, 'mask'));
+
+y = flipud(y);
+thickness = fliplr(thickness);
+surface = fliplr(surface);
+bed = fliplr(bed);
+maskdata = fliplr(maskdata);
+
+md.geometry.surface = InterpFromGridToMesh(x, y, surface', md.mesh.x, md.mesh.y, 0);
+md.geometry.bed = InterpFromGridToMesh(x, y, bed', md.mesh.x, md.mesh.y, 0);
+
+
+% BedMachine mask
+% ocean = 0, ice-free land = 1, grounded ice = 2, floating ice = 3
+mask = InterpFromGridToMesh(x, y, maskdata', md.mesh.x, md.mesh.y, -1);
+md.mask.ice_levelset = ones(md.mesh.numberofvertices, 1);
+pos = find(mask > 1);
+%pos = find(mask == 2); % Ignore floating ice
+md.mask.ice_levelset(pos) = -1;
+md.mask.ocean_levelset = ones(md.mesh.numberofvertices, 1);
+pos = find(mask > 2.5  | mask == 0); % Ethan mask==3|mask==0 *** ANS Changed this line to get rid of the spottiness in the ocean mask
+md.mask.ocean_levelset(pos) = -1;
+
+% *** ANS
+    md.geometry.base                 = zeros(length(md.geometry.bed),1); % initial setup
+    % Setting up ice thickness, ice base and grounded ice level set based on the hydrostatic equilibrium
+    floatation_base                  = md.geometry.surface*md.materials.rho_ice/(md.materials.rho_ice-md.materials.rho_water); % using the corrected surface
+    pos                              = find(floatation_base<=md.geometry.bed); % grounded ice
+    md.geometry.base(pos)            = md.geometry.bed(pos);
+    md.mask.ocean_levelset(pos)      = 1;
+    pos                              = find(floatation_base>md.geometry.bed); % floating ice
+    md.geometry.base(pos)            = floatation_base(pos);
+    md.mask.ocean_levelset(pos)      = -1;
+   md.geometry.thickness            = md.geometry.surface-md.geometry.base;
+   pos                              = find(md.geometry.thickness<=10); % dealing with rocks or ocean part
+   md.geometry.thickness(pos)       = 10;
+md.geometry.base(pos)=md.geometry.surface(pos)-md.geometry.thickness(pos);
+% Tricky part to offset ice mask by one element
+   pos = find(max(md.mask.ice_levelset(md.mesh.elements),[],2)>0);
+   md.mask.ice_levelset(md.mesh.elements(pos,:))= 1; % setting no ice
+
+disp('Interpolating velocities');
+xmin = ncreadatt(nsidc_vel, '/', 'xmin');
+ymax = ncreadatt(nsidc_vel, '/', 'ymax');
+spacing = ncreadatt(nsidc_vel, '/', 'spacing');
+nx = double(ncreadatt(nsidc_vel, '/', 'nx'));
+ny = double(ncreadatt(nsidc_vel, '/', 'ny'));
+velx = double(ncread(nsidc_vel, 'vx'));
+vely = double(ncread(nsidc_vel, 'vy'));
+xmin = strtrim(xmin);  
+xmin = str2num(xmin(1:end-2)); 
+ymax = strtrim(ymax);  
+ymax = str2num(ymax(1:end-2));  
+spacing = strtrim(spacing);
+spacing = str2num(spacing(1:end-2));  
+x2 = xmin + (0:1:nx)'*spacing;
+y2 = (ymax - ny * spacing) + (0:1:ny)'*spacing;
+md.initialization.vx = InterpFromGridToMesh(x2, y2, flipud(velx'), md.mesh.x, md.mesh.y, 0);
+md.initialization.vy = InterpFromGridToMesh(x2, y2, flipud(vely'), md.mesh.x, md.mesh.y, 0);
+md.initialization.vz = zeros(md.mesh.numberofvertices, 1);
+md.initialization.vel = sqrt(md.initialization.vx.^2 + md.initialization.vy.^2);
+
+disp('Initialize flow params');
+md.friction.coefficient = 20 * ones(md.mesh.numberofvertices, 1);
+md.friction.p = ones(md.mesh.numberofelements, 1);
+md.friction.q = ones(md.mesh.numberofelements, 1);
