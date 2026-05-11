@@ -1,0 +1,2 @@
+#!/bin/sh
+/Users/f007s79/Documents/repos/ISSM-binaries/bin/mpiexec -np 4 /Users/f007s79/Documents/repos/ISSM-binaries/bin/issm.exe TransientSolution ./ PIG 
